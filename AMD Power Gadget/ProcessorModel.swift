@@ -391,6 +391,26 @@ class ProcessorModel {
         let o = kernelGetUInt64(count: 2, selector: 11)
         return o.map{ $0 == 0 ? false : true }
     }
+
+    /// Whether this CPU exposes CPB at all. The kext reports this as the first
+    /// value of selector 11; on a part without it the bit does not exist and
+    /// writing HWCR would do nothing.
+    func isCPBSupported() -> Bool {
+        let o = getCPB()
+        return o.count > 0 && o[0]
+    }
+
+    /// Per-core effective frequency in MHz, as sampled by the kext.
+    ///
+    /// getMetric() returns [power, temperature, PStateCtl, freq0, freq1, ...],
+    /// so the frequencies start at index 3. Guarded because the metric is only
+    /// filled after the first successful poll, and callers run on a timer that
+    /// may fire before that.
+    func getEffectiveFrequencies() -> [Float] {
+        let metrics = getMetric(forced: false)
+        guard metrics.count > 3 else { return [] }
+        return Array(metrics[3...])
+    }
     
     func setCPB(enabled : Bool){
         var input: [UInt64] = [UInt64(enabled ? 1 : 0)]

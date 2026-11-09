@@ -89,6 +89,8 @@ class StatusbarController {
     
     var updateTimer: Timer?
     var menu: NSMenu?
+    var boostMenuItem: NSMenuItem?
+    var boostStatusItem: NSMenuItem?
     
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -139,7 +141,11 @@ class StatusbarController {
         view?.temp = temperature
         view?.pwr = power
         view.setNeedsDisplay(view.frame)
-        
+
+        // Run the boost decision on the same one-second tick that produced
+        // these numbers. It is a no-op unless the user turned it on, and it
+        // writes CPB only when its own hysteresis and dwell timers agree.
+        AdaptiveBoost.shared.tick(cpu: ProcessorModel.shared)
     }
     
     @objc func itemClicked(){
@@ -150,6 +156,7 @@ class StatusbarController {
             
             
         case .rightMouseUp:
+            refreshBoostMenuItems()
             guard let m = menu else {return}
             statusItem.popUpMenu(m)
             
@@ -187,10 +194,42 @@ class StatusbarController {
 
         m.addItem(NSMenuItem.separator())
 
+        // Adaptive boost. The title carries the current on/off state; the item
+        // below it shows the numbers the last decision was based on, so the
+        // behaviour is visible without opening anything.
+        boostMenuItem = NSMenuItem(title: NSLocalizedString("Adaptive Boost: Off",
+                                                           comment: "Status bar menu item toggling load-aware Core Performance Boost"),
+                                   action: #selector(toggleAdaptiveBoost),
+                                   keyEquivalent: "")
+        boostMenuItem?.target = self
+        if let b = boostMenuItem { m.addItem(b) }
+
+        boostStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        boostStatusItem?.isEnabled = false
+        if let s = boostStatusItem { m.addItem(s) }
+
+        m.addItem(NSMenuItem.separator())
+
         item = NSMenuItem(title: NSLocalizedString("Exit", comment: "Status bar menu item quitting the application"), action: #selector(exitApp), keyEquivalent: ""); item.target = self
         m.addItem(item)
         
 //        statusItem.menu = menu
+    }
+
+    /// Flip the adaptive loop. The menu is rebuilt before it is shown, so both
+    /// items are refreshed there rather than from the timer.
+    @objc func toggleAdaptiveBoost() {
+        AdaptiveBoost.shared.setEnabled(!AdaptiveBoost.shared.isEnabled)
+        refreshBoostMenuItems()
+    }
+
+    private func refreshBoostMenuItems() {
+        let on = AdaptiveBoost.shared.isEnabled
+        boostMenuItem?.title = NSLocalizedString(on ? "Adaptive Boost: On" : "Adaptive Boost: Off",
+                                                 comment: "Status bar menu item toggling load-aware Core Performance Boost")
+        boostStatusItem?.title = on ? AdaptiveBoost.shared.statusLine()
+                                  : NSLocalizedString("  (off - CPB follows the profile)",
+                                                      comment: "Shown when adaptive boost is disabled")
     }
 }
 

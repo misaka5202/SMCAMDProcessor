@@ -1,0 +1,98 @@
+name: Build AMD Power Gadget (fan profile support)
+
+on:
+  push:
+    branches: [ "fan-profile" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # x86_64 mac so the app builds for the same arch as the kexts.
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Fetch MacKernelSDK
+        run: |
+          set -euo pipefail
+          # The project references MacKernelSDK for the kext targets. The app
+          # target does not need it, but the project file does, and having it
+          # present keeps a full project build possible.
+          git clone --depth 1 https://github.com/acidanthera/MacKernelSDK || true
+          ls -la MacKernelSDK 2>/dev/null || echo "MacKernelSDK missing (app-only build should still work)"
+
+      - name: Build the app target
+        run: |
+          set -euo pipefail
+          # The app's Copy Files phase embeds APGLaunchHelper.app, but the
+          # project does not declare a target dependency for it, so building
+          # the app target alone fails with:
+          #   lstat(.../build/Release/APGLaunchHelper.app): No such file
+          # Build the helper first, then the app.
+          xcodebuild \
+            -project SMCAMDProcessor.xcodeproj \
+            -target APGLaunchHelper \
+            -configuration Release \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee helper.log
+
+          xcodebuild \
+            -project SMCAMDProcessor.xcodeproj \
+            -target "AMD Power Gadget" \
+            -configuration Release \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee app.log
+
+      - name: Verify the app bundle
+        run: |
+          set -euo pipefail
+          APP=$(find build -name "AMD Power Gadget.app" -maxdepth 5 | head -n 1)
+          test -n "$APP" || { echo "app not produced"; exit 1; }
+          echo "app: $APP"
+          plutil -p "$APP/Contents/Info.plist" | head -n 20
+          lipo -info "$APP/Contents/MacOS/AMD Power Gadget"
+          lipo -info "$APP/Contents/MacOS/AMD Power Gadget" | grep -q x86_64 \
+            || { echo "app is not x86_64"; exit 1; }
+          echo "verification OK"
+
+      - name: Package
+        if: always()
+        run: |
+          set -euo pipefail
+          OUT="$PWD/artifacts"
+          mkdir -p "$OUT"
+          APP=$(find build -name "AMD Power Gadget.app" -maxdepth 5 | head -n 1 || true)
+          if [ -n "$APP" ]; then
+            ditto -c -k --keepParent "$APP" "$OUT/AMD-Power-Gadget.zip"
+            ls -l "$OUT"
+          else
+            echo "no app to package"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AMD-Power-Gadget
+          path: artifacts/*
+          if-no-files-found: warn
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-log
+          path: |
+            app.log
+            helper.log
+          if-no-files-found: ignore
