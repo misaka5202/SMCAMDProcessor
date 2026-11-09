@@ -1,10 +1,19 @@
 name: Build AMD Power Gadget (fan profile support)
 
+# One run at a time per ref. The macOS runners are scarce on a free plan, so a
+# second run for the same branch would queue behind the first and eventually be
+# cancelled by GitHub's 15 minute limit.
+concurrency:
+  group: apg-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
+  workflow_dispatch:
   push:
     branches: [ "fan-profile" ]
-  pull_request:
-  workflow_dispatch:
+    paths:
+      - 'AMD Power Gadget/**'
+      - 'SMCAMDProcessor.xcodeproj/**'
 
 jobs:
   build:
